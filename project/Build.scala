@@ -17,6 +17,7 @@ import sbtassembly.Plugin._
 import AssemblyKeys._
 import sbt.Package.ManifestAttributes
 import scoverage.ScoverageSbtPlugin._
+import com.typesafe.sbteclipse.plugin.EclipsePlugin.EclipseKeys
 
 object FigaroBuild extends Build {
 
@@ -36,8 +37,8 @@ object FigaroBuild extends Build {
   override val settings = super.settings ++ Seq(
     organization := "com.cra.figaro",
     description := "Figaro: a language for probablistic programming",
-    version := "3.1.0.0",
-    scalaVersion := "2.11.4",
+    version := "3.2.0.0",
+    scalaVersion := "2.11.6",
     crossPaths := true,
     publishMavenStyle := true,
     pomExtra :=
@@ -78,8 +79,8 @@ object FigaroBuild extends Build {
   lazy val root = Project("root", file("."))
     .settings(publishLocal := {})
     .settings(publish := {})
-    .dependsOn(figaro, examples, work)
-    .aggregate(figaro, examples, work)
+    .dependsOn(figaro, examples)
+    .aggregate(figaro, examples)
 
   lazy val figaro = Project("Figaro", file("Figaro"))
     .settings (scalacOptions ++= Seq(
@@ -98,7 +99,7 @@ object FigaroBuild extends Build {
       "org.scalanlp" %% "breeze" % "0.10",
       "io.argonaut" %% "argonaut" % "6.0.4",
       "com.storm-enroute" %% "scalameter" % "0.6" % "provided",
-      "org.scalatest" %% "scalatest" % "2.2.4" % "test"
+      "org.scalatest" %% "scalatest" % "2.2.4" % "provided, test"
     ))
     // Enable forking
     .settings(fork := true)
@@ -126,15 +127,16 @@ object FigaroBuild extends Build {
     // ScalaMeter settings
     .settings(testFrameworks += new TestFramework("org.scalameter.ScalaMeterFramework"))
     .settings(logBuffered := false)
+    // SBTEclipse settings
+    .settings(EclipseKeys.eclipseOutput := Some("target/scala-2.11/classes"))
       
   lazy val examples = Project("FigaroExamples", file("FigaroExamples"))
     .dependsOn(figaro)
     .settings(packageOptions := Seq(Package.JarManifest(examplesManifest)))
     // Copy dependency JARs
     .settings(copyDepTask)
-
-  lazy val work = Project("FigaroWork", file("FigaroWork"))
-    .dependsOn(figaro)
+    // SBTEclipse settings
+    .settings(EclipseKeys.eclipseOutput := Some("target/scala-2.11/classes"))
 
   lazy val detTest = config("det") extend(Test)
   lazy val nonDetTest = config("nonDet") extend(Test)
