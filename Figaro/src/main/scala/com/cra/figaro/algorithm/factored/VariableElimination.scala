@@ -21,6 +21,7 @@ import com.cra.figaro.util._
 import annotation.tailrec
 import scala.collection.mutable.{ Map, Set }
 import scala.language.postfixOps
+import scala.util.control.TailCalls._
 
 /**
  * Trait of algorithms that perform variable elimination.
@@ -66,13 +67,17 @@ trait VariableElimination[T] extends FactoredAlgorithm[T] with OneTime {
 
   // The first element of FactorMap is the complete set of factors.
   // The second element maps variables to the factors mentioning that variable.
-  private type FactorMap[T] = Map[Variable[_], Set[Factor[T]]]
+  // The previous implementation used sets, but that resulted in bugs where an identical factor appeared more than once.
+  // The new implementation uses multisets.
+  private type FactorMap[T] = Map[Variable[_], MultiSet[Factor[T]]]
 
+  // Add a factor to the list, even if it appears already.
   private def addFactor[T](factor: Factor[T], map: FactorMap[T]): Unit =
-    factor.variables foreach (v => map += v -> (map.getOrElse(v, Set()) + factor))
+    factor.variables foreach (v => map += v -> (map.getOrElse(v, HashMultiSet()).addOne(factor)))
 
+  // Remove one instance of the factor from the list.
   private def removeFactor[T](factor: Factor[T], map: FactorMap[T]): Unit =
-    factor.variables foreach (v => map += v -> (map.getOrElse(v, Set()) - factor))
+    factor.variables foreach (v => map += v -> (map.getOrElse(v, HashMultiSet()).removeOne(factor)))
 
   protected def initialFactorMap(factors: Traversable[Factor[T]]): FactorMap[T] = {
     val map: FactorMap[T] = Map()
@@ -95,7 +100,7 @@ trait VariableElimination[T] extends FactoredAlgorithm[T] with OneTime {
 
   private def eliminate(
     variable: Variable[_],
-    factors: Set[Factor[T]],
+    factors: MultiSet[Factor[T]],
     map: FactorMap[T]): Unit = {
     val varFactors = map(variable)
     if (debug) {
@@ -106,31 +111,45 @@ trait VariableElimination[T] extends FactoredAlgorithm[T] with OneTime {
     if (varFactors nonEmpty) {
       val productFactor = varFactors reduceLeft (_.product(_))
       val resultFactor = productFactor.sumOver(variable)
-      varFactors foreach (removeFactor(_, map))
-      addFactor(resultFactor, map)
+      if (debug) println("Result factor\n" + resultFactor.toReadableString)
       comparator match {
         case None => ()
         case Some(recorder) => recordingFactors ::= productFactor.recordArgMax(variable, recorder)
       }
+      varFactors.foreach(factors.removeOne(_))
+      factors.addOne(resultFactor)
+      varFactors.foreach(removeFactor(_, map))
       map -= variable
-      factors --= varFactors
-      if (debug) println("Result factor\n" + resultFactor.toReadableString)
-      factors += resultFactor
+      addFactor(resultFactor, map)
     }
   }
 
+  // Wraps the TailRec class and returns the result
   protected def eliminateInOrder(
     order: List[Variable[_]],
-    factors: Set[Factor[T]],
-    map: FactorMap[T]): Set[Factor[T]] =
+    factors: MultiSet[Factor[T]],
+    map: FactorMap[T]): MultiSet[Factor[T]] = {
+    callEliminateInOrder(order, factors, map).result
+  }
+
+  /*
+   *  TailRec class turns a tail-recursive method into a while loop
+   *  The result needs to be extracted explicitly
+   */
+  private def callEliminateInOrder(
+    order: List[Variable[_]],
+    factors: MultiSet[Factor[T]],
+    map: FactorMap[T]): TailRec[MultiSet[Factor[T]]] = {
     order match {
       case Nil =>
-        factors
+        done(factors)
       case first :: rest =>
         eliminate(first, factors, map)
-        eliminateInOrder(rest, factors, map)
+        tailcall(callEliminateInOrder(rest, factors, map))
     }
-
+  }
+  
+  
   private[figaro] def ve(): Unit = {
     //expand()
     val (neededElements, _) = getNeededElements(starterElements, Int.MaxValue)
@@ -147,7 +166,7 @@ trait VariableElimination[T] extends FactoredAlgorithm[T] with OneTime {
     }
     val (_, order) = optionallyShowTiming(VariableElimination.eliminationOrder(allFactors, targetVariables), "Computing elimination order")
     val factorsAfterElimination =
-      optionallyShowTiming(eliminateInOrder(order, Set(allFactors: _*), initialFactorMap(allFactors)), "Elimination")
+      optionallyShowTiming(eliminateInOrder(order, HashMultiSet(allFactors: _*), initialFactorMap(allFactors)), "Elimination")
     if (debug) println("*****************")
     if (debug) factorsAfterElimination foreach (f => println(f.toReadableString))
     optionallyShowTiming(finish(factorsAfterElimination, order), "Finalizing")
@@ -159,7 +178,7 @@ trait VariableElimination[T] extends FactoredAlgorithm[T] with OneTime {
   /**
    * All implementation of variable elimination must specify what to do after variables have been eliminated.
    */
-  def finish(factorsAfterElimination: Set[Factor[T]], eliminationOrder: List[Variable[_]]): Unit
+  def finish(factorsAfterElimination: MultiSet[Factor[T]], eliminationOrder: List[Variable[_]]): Unit
 
   def run() = ve()
 
@@ -211,13 +230,13 @@ class ProbQueryVariableElimination(override val universe: Universe, targets: Ele
   private def marginalize(resultFactor: Factor[Double]) =
     targets foreach (marginalizeToTarget(resultFactor, _))
 
-  private def makeResultFactor(factorsAfterElimination: Set[Factor[Double]]): Factor[Double] = {
+  private def makeResultFactor(factorsAfterElimination: MultiSet[Factor[Double]]): Factor[Double] = {
     // It is possible that there are no factors (this will happen if there are  no queries or evidence).
     // Therefore, we start with the unit factor and use foldLeft, instead of simply reducing the factorsAfterElimination.
     factorsAfterElimination.foldLeft(Factory.unit(semiring))(_.product(_))
   }
 
-  def finish(factorsAfterElimination: Set[Factor[Double]], eliminationOrder: List[Variable[_]]) =
+  def finish(factorsAfterElimination: MultiSet[Factor[Double]], eliminationOrder: List[Variable[_]]) =
     marginalize(makeResultFactor(factorsAfterElimination))
 
   /**
@@ -232,7 +251,7 @@ class ProbQueryVariableElimination(override val universe: Universe, targets: Ele
     dist.toStream
   }
 
- /**
+  /**
    * Computes the expectation of a given function for single target element.
    */
   def computeExpectation[T](target: Element[T], function: T => Double): Double = {
