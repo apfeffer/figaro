@@ -21,24 +21,11 @@ import com.typesafe.sbteclipse.plugin.EclipsePlugin.EclipseKeys
 
 object FigaroBuild extends Build {
 
-  // Copy dependency JARs to /target/<scala-version>/lib
-  // Courtesy of
-  // http://stackoverflow.com/questions/7351280/collecting-dependencies-under-sbt-0-10-putting-all-dependency-jars-to-target-sc
-  lazy val copyDependencies = TaskKey[Unit]("copy-deps")
-
-  def copyDepTask = copyDependencies <<= (update, crossTarget, scalaVersion) map {
-    (updateReport, out, scalaVer) =>
-    updateReport.allFiles foreach { srcPath =>
-      val destPath = out / "lib" / srcPath.getName
-      IO.copyFile(srcPath, destPath, preserveLastModified=true)
-    }
-  }
-
   override val settings = super.settings ++ Seq(
     organization := "com.cra.figaro",
     description := "Figaro: a language for probablistic programming",
-    version := "3.2.0.0",
-    scalaVersion := "2.11.6",
+    version := "4.0.0.0",
+    scalaVersion := "2.11.7",
     crossPaths := true,
     publishMavenStyle := true,
     pomExtra :=
@@ -95,18 +82,23 @@ object FigaroBuild extends Build {
       "asm" % "asm" % "3.3.1",
       "org.apache.commons" % "commons-math3" % "3.3",
       "net.sf.jsci" % "jsci" % "1.2",
-      "com.typesafe.akka" %% "akka-actor" % "2.3.8",
+      "com.typesafe.akka" %% "akka-actor" % "2.3.14",
       "org.scalanlp" %% "breeze" % "0.10",
       "io.argonaut" %% "argonaut" % "6.0.4",
-      "com.storm-enroute" %% "scalameter" % "0.6" % "provided",
+      "org.prefuse" % "prefuse" % "beta-20071021",
+      "org.scala-lang.modules" %% "scala-swing" % "1.0.1",
+      "com.storm-enroute" %% "scalameter" % "0.7" % "provided",
       "org.scalatest" %% "scalatest" % "2.2.4" % "provided, test"
     ))
+    // Copy all managed dependencies to \lib_managed directory
+    .settings(retrieveManaged := true)
     // Enable forking
     .settings(fork := true)
     // Increase max memory for JVM for both testing and runtime
-    .settings(javaOptions in (Test,run) += "-Xmx8G")
+    .settings(javaOptions in (Test,run) += "-Xmx6G")
     // test settings
     .settings(parallelExecution in Test := false)
+    .settings(testOptions in Test += Tests.Argument("-oD"))
     .configs(detTest)
     .settings(inConfig(detTest)(Defaults.testTasks): _*)
     .settings(testOptions in detTest := Seq(Tests.Argument("-l", "com.cra.figaro.test.nonDeterministic")))
@@ -122,8 +114,6 @@ object FigaroBuild extends Build {
 	val cp = (fullClasspath in assembly).value
 	cp filter {_.data.getName == "arpack_combined_all-0.1-javadoc.jar"}
     })
-    // Copy dependency JARs
-    .settings(copyDepTask)
     // ScalaMeter settings
     .settings(testFrameworks += new TestFramework("org.scalameter.ScalaMeterFramework"))
     .settings(logBuffered := false)
@@ -133,10 +123,10 @@ object FigaroBuild extends Build {
   lazy val examples = Project("FigaroExamples", file("FigaroExamples"))
     .dependsOn(figaro)
     .settings(packageOptions := Seq(Package.JarManifest(examplesManifest)))
-    // Copy dependency JARs
-    .settings(copyDepTask)
     // SBTEclipse settings
     .settings(EclipseKeys.eclipseOutput := Some("target/scala-2.11/classes"))
+    // Copy all managed dependencies to \lib_managed directory
+    .settings(retrieveManaged := true)
 
   lazy val detTest = config("det") extend(Test)
   lazy val nonDetTest = config("nonDet") extend(Test)

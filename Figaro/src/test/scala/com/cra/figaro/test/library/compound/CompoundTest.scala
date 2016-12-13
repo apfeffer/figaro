@@ -69,14 +69,17 @@ class CompoundTest extends WordSpec with Matchers {
     "not generate a consequent that's not needed when sampling" in {
       Universe.createNew()
       var count = 0
-      def makeElem() = {
+      def makeElem1() = {        
+        Constant(1)
+      }
+      def makeElem2() = {
         count += 1
         Constant(1)
       }
-      val e = If(Constant(true), makeElem(), makeElem())
+      val e = If(Constant(true), makeElem1(), makeElem2())
       val alg = Importance(100, e)
       alg.start()
-      count should equal (1)
+      count should equal (0)
       alg.kill()
     }
   }
@@ -524,6 +527,21 @@ class CompoundTest extends WordSpec with Matchers {
       alg.probability(y, true) should be(((0.1 + 0.2) * 0.1 + 0.3 * 0.4 * 0.7 +
         (0.3 * 0.6 + 0.4) * (0.8 * 0.9 + 0.2))
         +- 0.00000000001)
+    }
+  }
+  
+    "A Rich CPD using an implicit universe" should {
+    "should add elements automatically to implicit universe instead of default" in {
+      Universe.createNew()
+      val otherUniverse = new Universe
+      implicit val implicitUniverse: Universe = otherUniverse
+      val x = Constant(true)
+      val y = Constant(true)
+      val z: Element[Boolean] = RichCPD(x, y,
+        (OneOf(true), *) -> Constant(true),
+        (OneOf(false), *) -> Constant(false))
+        Universe.universe.activeElements.size should be(0)
+        otherUniverse.activeElements.size should be(6)
     }
   }
 
