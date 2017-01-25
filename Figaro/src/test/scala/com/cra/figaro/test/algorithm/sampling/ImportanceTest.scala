@@ -31,19 +31,20 @@ import com.cra.figaro.test.tags.NonDeterministic
 import scala.language.reflectiveCalls
 import org.scalatest.Matchers
 import org.scalatest.{ PrivateMethodTester, WordSpec }
+import scala.collection.mutable.Set
+
 class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
 
   "Sampling a value of a single element" should {
 
     "reject sampling process if condition violated" in {
       Universe.createNew()
-      val target = Flip(0.7)
+      val target = Flip(1.0)
       target.observe(false)
       val numTrials = 100000
       val tolerance = 0.01
       val imp = Importance(target)
-      val state = Importance.State()
-      an[RuntimeException] should be thrownBy { imp.sampleOne(state, target, Some(true)) }
+      an[RuntimeException] should be thrownBy { imp.lw.traverse(List((target, None, None)), List(), 0.0, Set()) }
 
     }
 
@@ -54,9 +55,8 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
       val numTrials = 100000
       val tolerance = 0.01
       val imp = Importance(target)
-      val state = Importance.State()
-      val value = imp.sampleOne(state, target, Some(false))
-      value should equal(false)
+      imp.lw.traverse(List((target, Some(false), None)), List(), 0.0, Set())
+      target.value should equal(false)
     }
 
     "for a Constant return the constant with probability 1" in {
@@ -211,8 +211,7 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
         Apply(B, (b: List[List[Boolean]]) => b.head)
       })
       val alg = Importance(1, c)
-      val state = Importance.State()
-      alg.sampleOne(state, c, None)
+      alg.lw.computeWeight(List(c))
       c.value.asInstanceOf[List[Boolean]].head should be(true || false)
     }
   }
@@ -327,7 +326,7 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
       // Uniform(0,1) is beta(1,1)
       // Result is beta(1 + 16,1 + 4)
       // Expectation is (alpha) / (alpha + beta) = 17/22
-      alg.expectation(b, (d: Double) => d) should be((17.0 / 22.0) +- 0.02)
+      alg.expectation(b)(d => d) should be((17.0 / 22.0) +- 0.02)
       val time1 = System.currentTimeMillis()
       // If likelihood weighting is working, stopping and querying the algorithm should be almost instantaneous
       // If likelihood weighting is not working, stopping and querying the algorithm requires waiting for a non-rejected sample
@@ -429,7 +428,7 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
       // uniform(0,1) is beta(1,1)
       // Result is beta(1 + 1600,1 + 400)
       // Expectation is (alpha) / (alpha + beta) = 1601/2003
-      alg.expectation(beta, (d: Double) => d) should be((1601.0 / 2003.0) +- 0.02)
+      alg.expectation(beta)(d => d) should be((1601.0 / 2003.0) +- 0.02)
       val time1 = System.currentTimeMillis()
       // If likelihood weighting is working, stopping and querying the algorithm should be almost instantaneous
       // If likelihood weighting is not working, stopping and querying the algorithm requires waiting for a non-rejected sample
@@ -475,6 +474,8 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
       i.kill()
     }
 
+    /* These tests are no longer valid. Since there is a hidden dependency, we can't support this */
+    /*
     "resample elements inside class defined in a chain" in {
       Universe.createNew()
       class temp {
@@ -500,6 +501,8 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
       //alg.probability(b, true) should be (0.9 +- .01)
 
     }
+    * 
+    */
 
     "not suffer from stack overflow with small probability of success" taggedAs (Performance) in {
       Universe.createNew()
@@ -616,6 +619,44 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
       }
     }
 
+    "Sampling the posterior" should {
+      "produce the correct answer for marginals" in {
+        Universe.createNew()
+        val u = Uniform(0.2, 1.0)
+        val f = Flip(u)
+        val a = If(f, Select(0.3 -> 1, 0.7 -> 2), Constant(2))
+        a.setConstraint((i: Int) => i.toDouble)
+        // U(true) = \int_{0.2}^{1.0} (0.3 + 2 * 0.7) p = 0.85 * 0.96
+        // U(false) = \int_{0.2}^(1.0) (2 * (1-p)) = 0.64
+        val u1 = 0.85 * 0.96
+        val u2 = 0.64
+        val pos = Importance.sampleJointPosterior(f)
+        val probTrue = (pos.take(1000).toList.map(t => t(0).asInstanceOf[Boolean])).count(p => p)
+        probTrue.toDouble / 1000.0 should be(u1 / (u1 + u2) +- .01)
+      }
+
+      "produce the correct answer for joint" in {
+        Universe.createNew()
+        val u = Uniform(0.2, 1.0)
+        val f = Flip(u)
+        val a = If(f, Select(0.3 -> 1, 0.7 -> 2), Constant(2))
+        a.setConstraint((i: Int) => i.toDouble)
+        val pair = ^^(f,a)
+        val alg = Importance(20000, pair)    
+        alg.start()
+        
+        val pos = Importance.sampleJointPosterior(f, a)
+        val samples = pos.take(5000).toList.map(t => (t(0).asInstanceOf[Boolean], t(1).asInstanceOf[Int]))
+        
+        val probTrueTwo = samples.count(p => p._1 == true && p._2 == 2).toDouble/5000.0 should be(alg.probability(pair, (true, 2)) +- .01)
+        val probTrueOne = samples.count(p => p._1 == true && p._2 == 1).toDouble/5000.0 should be(alg.probability(pair, (true, 1)) +- .01)
+        val probFalseTwo = samples.count(p => p._1 == false && p._2 == 2).toDouble/5000.0 should be(alg.probability(pair, (false, 2)) +- .01)
+        val probFalseOne = samples.count(p => p._1 == false && p._2 == 1).toDouble/5000.0 should be(alg.probability(pair, (false, 1)) +- .01)
+        alg.kill()
+      }
+
+    }
+
   }
 
   def weightedSampleTest[T](target: Element[T], predicate: T => Boolean, prob: Double) {
@@ -633,9 +674,8 @@ class ImportanceTest extends WordSpec with Matchers with PrivateMethodTester {
 
     def attempt(): (Double, T) = {
       try {
-        val state = Importance.State()
-        val value = imp.sampleOne(state, target, None)
-        (state.weight, value.asInstanceOf[T])
+        val weight = imp.lw.computeWeight(List(target))
+        (weight, target.value.asInstanceOf[T])
       } catch {
         case Importance.Reject => attempt()
       }

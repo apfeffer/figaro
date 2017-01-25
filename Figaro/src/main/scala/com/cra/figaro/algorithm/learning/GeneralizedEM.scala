@@ -14,14 +14,20 @@
 package com.cra.figaro.algorithm.learning
 
 import com.cra.figaro.language._
-
 import com.cra.figaro.algorithm.{ Algorithm, ParameterLearner, ProbQueryAlgorithm, OneTime }
 import com.cra.figaro.algorithm.factored.beliefpropagation.BeliefPropagation
 import com.cra.figaro.algorithm.sampling.{ Importance, MetropolisHastings, ProposalScheme }
-import com.cra.figaro.algorithm.factored.factors.Factory
+import com.cra.figaro.algorithm.factored.factors.factory.Factory
 import com.cra.figaro.patterns.learning.ModelParameters
 import com.cra.figaro.algorithm.factored.SufficientStatisticsVariableElimination
 import com.cra.figaro.algorithm.online.Online
+import com.cra.figaro.algorithm.factored.VariableElimination
+import com.cra.figaro.algorithm.factored.factors.Variable
+import com.cra.figaro.algorithm.sampling.Forward
+import com.cra.figaro.algorithm.OneTimeProbQuery
+import com.cra.figaro.algorithm.factored.beliefpropagation.OneTimeProbabilisticBeliefPropagation
+import com.cra.figaro.algorithm.factored.beliefpropagation.ProbQueryBeliefPropagation
+import com.cra.figaro.algorithm.sampling.ProbEvidenceSampler
 
 /**
  * Expectation maximization iteratively produces an estimate of sufficient statistics for learnable parameters,
@@ -32,25 +38,25 @@ trait ExpectationMaximization extends Algorithm with ParameterLearner {
   protected val paramMap: Map[Parameter[_], Seq[Double]] = Map(targetParameters.map(p => p -> p.zeroSufficientStatistics): _*)
   protected def doExpectationStep(): Map[Parameter[_], Seq[Double]]
 
-  protected def doStart(): Unit = {
+  protected[algorithm] def doStart(): Unit = {
     em()
   }
 
   /*
    * Stop the algorithm from computing. The algorithm is still ready to provide answers after it returns.
    */
-  protected def doStop(): Unit = {}
+  protected[algorithm] def doStop(): Unit = {}
 
   /*
    * Resume the computation of the algorithm, if it has been stopped.
    */
 
-  protected def doResume(): Unit = {}
+  protected[algorithm] def doResume(): Unit = {}
 
   /*
    * Kill the algorithm so that it is inactive. It will no longer be able to provide answers.
    */
-  protected def doKill(): Unit = {}
+  protected[algorithm] def doKill(): Unit = {}
 
   val terminationCriteria: () => EMTerminationCriteria
   val targetParameters: Seq[Parameter[_]]
@@ -83,21 +89,23 @@ trait ExpectationMaximization extends Algorithm with ParameterLearner {
  */
 trait OnlineExpectationMaximization extends Online with ExpectationMaximization {
 
+  override def doStart = {}
+
   protected var lastIterationStatistics: Map[Parameter[_], Seq[Double]] = Map(targetParameters.map(p => p -> p.zeroSufficientStatistics): _*)
   override val initial: Universe
   override val transition: Function0[Universe]
   protected var currentUniverse: Universe = initial
 
-  private def updateStatistics(newStatistics:Map[Parameter[_], Seq[Double]]): Map[Parameter[_], Seq[Double]] = {
+  private def updateStatistics(newStatistics: Map[Parameter[_], Seq[Double]]): Map[Parameter[_], Seq[Double]] = {
     Map((for (p <- paramMap.keys) yield {
       val updatedStatistics = (lastIterationStatistics(p) zip newStatistics(p)).map((pair: (Double, Double)) => pair._1 + pair._2)
       (p, updatedStatistics)
-    }).toSeq:_*)
-  } 
-  
- /**
- * Observe new evidence and perform one expectation step and one maximization step
- */
+    }).toSeq: _*)
+  }
+
+  /**
+   * Observe new evidence and perform one expectation step and one maximization step
+   */
   def update(evidence: Seq[NamedEvidence[_]] = Seq()): Unit = {
     currentUniverse = transition()
     currentUniverse.assertEvidence(evidence)
@@ -124,13 +132,12 @@ class ExpectationMaximizationWithFactors(val universe: Universe, val targetParam
 
 }
 
-
 /**
  * An online EM algorithm which learns parameters using a factored algorithm
  */
 class OnlineExpectationMaximizationWithFactors(override val initial: Universe, override val transition: Function0[Universe], val targetParameters: Parameter[_]*)(val terminationCriteria: () => EMTerminationCriteria)
   extends OnlineExpectationMaximization {
-  
+
   def doExpectationStep = {
     val algorithm = SufficientStatisticsVariableElimination(paramMap)(currentUniverse)
     algorithm.start
@@ -141,13 +148,13 @@ class OnlineExpectationMaximizationWithFactors(override val initial: Universe, o
   }
 }
 
-
 /**
  * An EM algorithm which learns parameters using an inference algorithm provided as an argument
  */
 class GeneralizedEM(inferenceAlgorithmConstructor: Seq[Element[_]] => Universe => ProbQueryAlgorithm with OneTime, val universe: Universe, val targetParameters: Parameter[_]*)(val terminationCriteria: () => EMTerminationCriteria) extends ExpectationMaximization {
 
-  protected def doExpectationStep(): Map[Parameter[_], Seq[Double]] = {
+  //Dependent universe doesn't work the same way.
+  protected def doExpectationStep(): Map[Parameter[_], Seq[Double]] = {    
     val inferenceTargets =
       universe.activeElements.filter(_.isInstanceOf[Parameterized[_]]).map(_.asInstanceOf[Parameterized[_]])
 
@@ -161,10 +168,13 @@ class GeneralizedEM(inferenceAlgorithmConstructor: Seq[Element[_]] => Universe =
       for {
         target <- universe.directlyUsedBy(parameter)
       } {
+
         val t: Parameterized[target.Value] = target.asInstanceOf[Parameterized[target.Value]]
-        val distribution: Stream[(Double, target.Value)] = algorithm.distribution(t)
-        val newStats = t.distributionToStatistics(parameter, distribution)
-        stats = (stats.zip(newStats)).map(pair => pair._1 + pair._2)
+        if (inferenceTargets.contains(t)) {
+          val distribution: Stream[(Double, target.Value)] = algorithm.distribution(t)
+          val newStats = t.distributionToStatistics(parameter, distribution)
+          stats = (stats.zip(newStats)).map(pair => pair._1 + pair._2)
+        }
       }
       result += parameter -> stats
     }
@@ -179,25 +189,33 @@ class GeneralizedEM(inferenceAlgorithmConstructor: Seq[Element[_]] => Universe =
  */
 class GeneralizedOnlineEM(inferenceAlgorithmConstructor: Seq[Element[_]] => Universe => ProbQueryAlgorithm with OneTime, override val initial: Universe, override val transition: Function0[Universe], val targetParameters: Parameter[_]*)(val terminationCriteria: () => EMTerminationCriteria) extends OnlineExpectationMaximization {
 
-  
+  protected def usesParameter(l: List[Element[_]]): Map[Parameter[_], Iterable[Parameterized[_]]] = {
+    (l.map { x => x match { case p: Parameterized[_] => { p -> p.parameters.head } } }).groupBy(_._2).mapValues(_.map(_._1))
+  }
+
   protected def doExpectationStep(): Map[Parameter[_], Seq[Double]] = {
     val inferenceTargets =
       currentUniverse.activeElements.filter(_.isInstanceOf[Parameterized[_]]).map(_.asInstanceOf[Parameterized[_]])
 
     val algorithm = inferenceAlgorithmConstructor(inferenceTargets)(currentUniverse)
     algorithm.start()
-
+    //println("universe: " + currentUniverse.hashCode)
     var result: Map[Parameter[_], Seq[Double]] = Map()
 
+    val uses = usesParameter(inferenceTargets)
     for { parameter <- targetParameters } {
       var stats = parameter.zeroSufficientStatistics
-      for {
-        target <- currentUniverse.directlyUsedBy(parameter)
-      } {
-        val t: Parameterized[target.Value] = target.asInstanceOf[Parameterized[target.Value]]
-        val distribution: Stream[(Double, target.Value)] = algorithm.distribution(t)
-        val newStats = t.distributionToStatistics(parameter, distribution)
-        stats = (stats.zip(newStats)).map(pair => pair._1 + pair._2)
+      if (uses.contains(parameter)) {
+        for {
+          target <- uses(parameter)
+        } {
+          val t: Parameterized[target.Value] = target.asInstanceOf[Parameterized[target.Value]]
+          if (inferenceTargets.contains(t)) {
+            val distribution: Stream[(Double, target.Value)] = algorithm.distribution(t)
+            val newStats = t.distributionToStatistics(parameter, distribution)
+            stats = (stats.zip(newStats)).map(pair => pair._1 + pair._2)
+          }
+        }
       }
       result += parameter -> stats
     }
@@ -208,7 +226,7 @@ class GeneralizedOnlineEM(inferenceAlgorithmConstructor: Seq[Element[_]] => Univ
 }
 
 object EMWithBP {
-  
+
   private val defaultBPIterations = 10
 
   def online(transition: () => Universe, p: Parameter[_]*)(implicit universe: Universe) = {
@@ -220,8 +238,11 @@ object EMWithBP {
   }
 
   private def makeBP(numIterations: Int, targets: Seq[Element[_]])(universe: Universe) = {
-    Factory.removeFactors()
-    BeliefPropagation(numIterations, targets: _*)(universe)
+    Variable.clearCache
+    new ProbQueryBeliefPropagation(universe, targets: _*)(
+      List(),
+      (u: Universe, e: List[NamedEvidence[_]]) => () => ProbEvidenceSampler.computeProbEvidence(10000, e)(u)) 
+      with OneTimeProbabilisticBeliefPropagation with OneTimeProbQuery with ParameterLearner { val iterations = numIterations }
   }
   /**
    * An expectation maximization algorithm using Belief Propagation sampling for inference.
@@ -229,50 +250,58 @@ object EMWithBP {
    * @param params parameters to target with EM algorithm
    */
   def apply(params: ModelParameters)(implicit universe: Universe) = {
+    println("Warning: Using BP with EM can have produce unpredictable behavior if parameterized elements are created inside a Chain.")
     val parameters = params.convertToParameterList
     new GeneralizedEM((targets: Seq[Element[_]]) => (universe: Universe) => makeBP(defaultBPIterations, targets)(universe), universe, parameters: _*)(EMTerminationCriteria.maxIterations(10))
   }
   /**
-   * An expectation maximization algorithm using Belief Propagation sampling for inference.
+   * An expectation maximization algorithm using Belief Propagation for inference.
    * @param emIterations number of iterations of the EM algorithm
    * @param bpIterations number of iterations of the BP algorithm
    * @param params parameters to target with EM algorithm
    */
   def apply(emIterations: Int, bpIterations: Int, p: ModelParameters)(implicit universe: Universe) = {
+    println("Warning: Using BP with EM can have produce unpredictable behavior if parameterized elements are created inside a Chain.")
     val parameters = p.convertToParameterList
     new GeneralizedEM((targets: Seq[Element[_]]) => (universe: Universe) => makeBP(bpIterations, targets)(universe), universe, parameters: _*)(EMTerminationCriteria.maxIterations(emIterations))
   }
 
   /**
-   * An expectation maximization algorithm using Belief Propagation sampling for inference.
+   * An expectation maximization algorithm using Belief Propagation for inference.
    * @param params parameters to target with EM algorithm
    */
-  def apply(params: Parameter[_]*)(implicit universe: Universe) =
+  def apply(params: Parameter[_]*)(implicit universe: Universe) = {
+    println("Warning: Using BP with EM can have produce unpredictable behavior if parameterized elements are created inside a Chain.")
     new GeneralizedEM((targets: Seq[Element[_]]) => (universe: Universe) => makeBP(defaultBPIterations, targets)(universe), universe, params: _*)(EMTerminationCriteria.maxIterations(10))
+  }
 
   /**
-   * An expectation maximization algorithm using importance sampling for inference.
+   * An expectation maximization algorithm using Belief Propagation for inference.
    * @param emIterations number of iterations of the EM algorithm
    * @param bpIterations number of iterations of the BP algorithm
    * @param params parameters to target with EM algorithm
    */
-  def apply(emIterations: Int, bpIterations: Int, params: Parameter[_]*)(implicit universe: Universe) =
+  def apply(emIterations: Int, bpIterations: Int, params: Parameter[_]*)(implicit universe: Universe) = {
+    println("Warning: Using BP with EM can have produce unpredictable behavior if parameterized elements are created inside a Chain.")
     new GeneralizedEM((targets: Seq[Element[_]]) => (universe: Universe) => makeBP(bpIterations, targets)(universe), universe, params: _*)(EMTerminationCriteria.maxIterations(emIterations))
+  }
 
   /**
-   * An expectation maximization algorithm using importance sampling for inference.
+   * An expectation maximization algorithm using Belief Propagation for inference.
    * @param terminationCriteria criteria for stopping the EM algorithm
    * @param bpIterations number of iterations of the BP algorithm
    * @param params parameters to target with EM algorithm
    */
-  def apply(terminationCriteria: () => EMTerminationCriteria, bpIterations: Int, params: Parameter[_]*)(implicit universe: Universe) =
+  def apply(terminationCriteria: () => EMTerminationCriteria, bpIterations: Int, params: Parameter[_]*)(implicit universe: Universe) = {
+    println("Warning: Using BP with EM can have produce unpredictable behavior if parameterized elements are created inside a Chain.")
     new GeneralizedEM((targets: Seq[Element[_]]) => (universe: Universe) => makeBP(bpIterations, targets)(universe), universe, params: _*)(terminationCriteria)
+  }
 }
 
 object EMWithImportance {
-  
+
   private val defaultImportanceParticles = 100000
-  
+
   private def makeImportance(numParticles: Int, targets: Seq[Element[_]])(universe: Universe) = {
     Importance(numParticles, targets: _*)(universe)
   }
@@ -342,7 +371,7 @@ object EMWithImportance {
 object EMWithMH {
 
   private val defaultMHParticles = 100000
-  
+
   private def makeImportance(numParticles: Int, targets: Seq[Element[_]])(universe: Universe) = {
     Importance(numParticles, targets: _*)(universe)
   }

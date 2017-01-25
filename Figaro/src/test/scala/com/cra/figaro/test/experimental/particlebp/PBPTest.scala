@@ -37,6 +37,8 @@ import com.cra.figaro.experimental.particlebp.AutomaticDensityEstimator
 import com.cra.figaro.algorithm.sampling.ProbEvidenceSampler
 import com.cra.figaro.ndtest._
 import org.apache.commons.math3.distribution.MultivariateNormalDistribution
+import akka.util.Timeout
+import java.util.concurrent.TimeUnit
 
 class PBPTest extends WordSpec with Matchers {
 
@@ -76,12 +78,12 @@ class PBPTest extends WordSpec with Matchers {
         Inject(f: _*)
       })
       val pbpSampler = ParticleGenerator(Universe.universe)
-      pbpSampler.update(n, pbpSampler.numArgSamples, List[(Double, _)]((1.0, 2.0)))
+      pbpSampler.update(n, pbpSampler.numSamplesFromAtomics, List[(Double, _)]((1.0, 2.0)))
       val bpb = ParticleBeliefPropagation(1, 1, items)
       bpb.runOuterLoop
       val fg_2 = bpb.bp.factorGraph.getNodes.filter(p => p.isInstanceOf[VariableNode]).toSet
 
-      pbpSampler.update(n, pbpSampler.numArgSamples, List[(Double, _)]((1.0, 3.0)))
+      pbpSampler.update(n, pbpSampler.numSamplesFromAtomics, List[(Double, _)]((1.0, 3.0)))
       val dependentElems = Set[Element[_]](n, number, items)
       bpb.runInnerLoop(dependentElems, Set())
       // Currently have to subtract 3 since the old factors for n = 2 also get created since they exist in the chain cache
@@ -114,9 +116,9 @@ class PBPTest extends WordSpec with Matchers {
 
       val b = bp.distribution(ep).toList
       bp.probability(e2, (i: Int) => i == 0) should be(e2_0 +- tol)
-      bp.probability(e2, (i: Int) => i == 1) should be(e2_1 +- tol)
+      bp.probability(e2)(_ == 1) should be(e2_1 +- tol)
       bp.probability(e2, (i: Int) => i == 2) should be(e2_2 +- tol)
-      bp.probability(e2, (i: Int) => i == 3) should be(e2_3 +- tol)
+      bp.probability(e2)(_ == 3) should be(e2_3 +- tol)
     }
 
     "correctly retrieve the last messages to recompute sample densities" in {
@@ -209,7 +211,7 @@ class PBPTest extends WordSpec with Matchers {
           // U(false) = \int_{0.2}^{1.0) (1-p)
           val u1 = 0.35 * 0.96
           val u2 = 0.32
-          val result = test(f, 5000, 250, 100, 100, (b: Boolean) => b, u1 / (u1 + u2), globalTol, false)
+          val result = test(f, 5000, 500, 100, 100, (b: Boolean) => b, u1 / (u1 + u2), globalTol, false)
           update(result, NDTest.TTEST, "ConditionOnDependentElement", u1 / (u1 + u2), alpha)
         }
       }
@@ -228,7 +230,7 @@ class PBPTest extends WordSpec with Matchers {
           // U(false) = \int_{0.2}^(1.0) (2 * (1-p)) = 0.64
           val u1 = 0.85 * 0.96
           val u2 = 0.64
-          val result = test(f, 5000, 250, 100, 100, (b: Boolean) => b, u1 / (u1 + u2), globalTol, false)
+          val result = test(f, 5000, 500, 100, 100, (b: Boolean) => b, u1 / (u1 + u2), globalTol, false)
           update(result, NDTest.TTEST, "ConstraintOnDependentElement", u1 / (u1 + u2), alpha)
         }
       }
@@ -268,7 +270,7 @@ class PBPTest extends WordSpec with Matchers {
           Universe.createNew()
           val algorithm = ParticleBeliefPropagation(1, 20, 100, 100, f)(u1)
           algorithm.start()
-          val result = algorithm.probability(f, (b: Boolean) => b)
+          val result = algorithm.probability(f)(b => b)
           algorithm.kill()
           update(result, NDTest.TTEST, "DifferentUniverse", 0.6, alpha)
         }
@@ -329,7 +331,7 @@ class PBPTest extends WordSpec with Matchers {
       })
       val algorithm = ParticleBeliefPropagation(10, 4, 15, 15, loc, locX, locY)
       algorithm.start()
-      val locE = algorithm.expectation(loc, (d: (Double, Double)) => d._1 * d._2)
+      val locE = algorithm.expectation(loc)(d => d._1 * d._2)
       val cov = locE - algorithm.mean(locX) * algorithm.mean(locY)
 
       ParticleGenerator.clear
@@ -412,7 +414,9 @@ class PBPTest extends WordSpec with Matchers {
     val algorithm = if (oneTime) {
       ParticleBeliefPropagation(outer, inner, argSamples, totalSamples, target)
     } else {
-      ParticleBeliefPropagation(inner.toLong, argSamples, totalSamples, target)
+      val alg = ParticleBeliefPropagation(inner.toLong, argSamples, totalSamples, target)
+      alg.messageTimeout = Timeout(30000, TimeUnit.MILLISECONDS)
+      alg
     }
     algorithm.start()
     if (!oneTime) Thread.sleep(outer.toLong)

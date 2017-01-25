@@ -13,11 +13,13 @@
 
 package com.cra.figaro.algorithm.sampling
 
-import com.cra.figaro.algorithm._
-import com.cra.figaro.language._
 import scala.collection.mutable.Map
 import scala.language.existentials
 import scala.language.postfixOps
+
+import com.cra.figaro.algorithm._
+import com.cra.figaro.language._
+import com.cra.figaro.util._
 
 /**
  * Samplers that use samples without weights.
@@ -37,7 +39,7 @@ abstract class BaseUnweightedSampler(val universe: Universe, targets: Element[_]
   protected var sampleCount: Int = _
 
   /**
-   * Number of samples taken.
+   * Number of samples taken
    */
   def getSampleCount = sampleCount
 
@@ -76,7 +78,7 @@ abstract class BaseUnweightedSampler(val universe: Universe, targets: Element[_]
     val s = sample()
     if (sampleCount == 0 && s._1) {
       initUpdates
-    }    
+    }
     if (s._1) {
       sampleCount += 1
       s._2 foreach (t => updateTimesSeenForTarget(t._1.asInstanceOf[Element[t._1.Value]], t._2.asInstanceOf[t._1.Value]))
@@ -85,33 +87,43 @@ abstract class BaseUnweightedSampler(val universe: Universe, targets: Element[_]
 
   protected def update(): Unit = {
     sampleCount += 1
-    targets.foreach(t => updateTimesSeenForTarget(t.asInstanceOf[Element[t.Value]], t.value))
+    if (allLastUpdates.nonEmpty) targets.foreach(t => updateTimesSeenForTarget(t.asInstanceOf[Element[t.Value]], t.value))
     sampleCount -= 1
   }
 
 }
 
-trait UnweightedSampler extends BaseUnweightedSampler with ProbQueryAlgorithm {
-
-  protected def projection[T](target: Element[T]): List[(T, Double)] = {
-    val timesSeen = allTimesSeen.find(_._1 == target).get._2.asInstanceOf[Map[T, Int]]
-    timesSeen.mapValues(_ / sampleCount.toDouble).toList
-  }
+trait UnweightedSampler extends BaseUnweightedSampler with ProbQuerySampler with StreamableProbQueryAlgorithm {
 
   /**
-   * Return an estimate of the expectation of the function under the marginal probability distribution
-   * of the target.
+   * Total weight of samples taken, in log space
    */
-  def computeExpectation[T](target: Element[T], function: T => Double) = {
-    val contributions = projection(target) map (pair => function(pair._1) * pair._2)
-    (0.0 /: contributions)(_ + _)
-  }
+  def getTotalWeight: Double = math.log(getSampleCount)
 
-  /**
-   * Return an estimate of the marginal probability distribution over the target that lists each element
-   * with its probability.
-   */
-  def computeDistribution[T](target: Element[T]): Stream[(Double, T)] =
-    projection(target) map (_.swap) toStream
+  override protected[algorithm] def computeProjection[T](target: Element[T]): List[(T, Double)] = {
+    if (allLastUpdates.nonEmpty) {
+      val timesSeen = allTimesSeen.find(_._1 == target).get._2.asInstanceOf[Map[T, Int]]
+      timesSeen.mapValues(_ / sampleCount.toDouble).toList
+    } else {
+      println("Error: MH sampler did not accept any samples")
+      List()
+    }
+  }
+  
+  def sampleFromPosterior[T](element: Element[T]): Stream[T] = {
+    def nextSample(posterior: List[(Double, T)]): Stream[T] = sampleMultinomial(posterior) #:: nextSample(posterior)
+
+    if (!allTimesSeen.contains(element)) {
+      throw new NotATargetException(element)
+    } else {
+      val (values, weights) = allTimesSeen(element).toList.unzip
+      if (values.isEmpty) throw new NotATargetException(element)
+
+      if (sampleCount == 0) throw new ZeroTotalUnnormalizedProbabilityException
+
+      val weightedValues = weights.map(w => w.toDouble/sampleCount.toDouble).zip(values.asInstanceOf[List[T]])
+      nextSample(weightedValues)
+    }
+  }
 
 }

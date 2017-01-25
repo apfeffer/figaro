@@ -26,6 +26,7 @@ import com.cra.figaro.library.atomic.continuous.{Uniform => CUniform}
 import com.cra.figaro.library.compound.IntSelector
 import com.cra.figaro.algorithm.lazyfactored.LazyValues
 import com.cra.figaro.algorithm.UnsupportedAlgorithmException
+import com.cra.figaro.algorithm.factored.factors.factory.Factory
 
 class BPTest extends WordSpec with Matchers {
 
@@ -39,7 +40,8 @@ class BPTest extends WordSpec with Matchers {
       val a = If(f, Select(0.3 -> 1, 0.7 -> 2), Constant(2))
       val semiring = SumProductSemiring()
       LazyValues(Universe.universe).expandAll(Universe.universe.activeElements.toSet.map((elem: Element[_]) => ((elem, Integer.MAX_VALUE))))
-      val factors = Universe.universe.activeElements flatMap (Factory.make(_))
+      Universe.universe.activeElements.foreach(Variable(_))
+      val factors = Universe.universe.activeElements flatMap (Factory.makeFactorsForElement(_))
       val graph = new BasicFactorGraph(factors, semiring)
       val fn = graph.adjacencyList.filter(p => { p._1 match { case fn: FactorNode => true; case _ => false; } })
       val vn = graph.adjacencyList.filter(p => { p._1 match { case vn: VariableNode => true; case _ => false; } })
@@ -55,7 +57,8 @@ class BPTest extends WordSpec with Matchers {
       val a = If(f, Select(0.3 -> 1, 0.7 -> 2), Constant(2))
       val semiring = SumProductSemiring()
       LazyValues(Universe.universe).expandAll(Universe.universe.activeElements.toSet.map((elem: Element[_]) => ((elem, Integer.MAX_VALUE))))
-      val factors = Universe.universe.activeElements flatMap (Factory.make(_))
+      Universe.universe.activeElements.foreach(Variable(_))
+      val factors = Universe.universe.activeElements flatMap (Factory.makeFactorsForElement(_))
       val graph = new BasicFactorGraph(factors, semiring)
       val fn = graph.adjacencyList.filter(p => { p._1 match { case fn: FactorNode => true; case _ => false; } })
       val vn = graph.adjacencyList.filter(p => { p._1 match { case vn: VariableNode => true; case _ => false; } })
@@ -116,9 +119,9 @@ class BPTest extends WordSpec with Matchers {
 
       val tol = 0.000001
       bp.probability(e2, (i: Int) => i == 0) should be(e2_0 +- tol)
-      bp.probability(e2, (i: Int) => i == 1) should be(e2_1 +- tol)
+      bp.probability(e2)(_ == 1) should be(e2_1 +- tol)
       bp.probability(e2, (i: Int) => i == 2) should be(e2_2 +- tol)
-      bp.probability(e2, (i: Int) => i == 3) should be(e2_3 +- tol)
+      bp.probability(e2)(_ == 3) should be(e2_3 +- tol)
     }
 
     "with no conditions or constraints produce the correct result" in {
@@ -187,7 +190,7 @@ class BPTest extends WordSpec with Matchers {
       val tolerance = 0.0000001
       val algorithm = BeliefPropagation(10, f)(u1)
       algorithm.start()
-      algorithm.probability(f, (b: Boolean) => b) should be(0.6 +- globalTol)
+      algorithm.probability(f)(b => b) should be(0.6 +- globalTol)
       algorithm.kill()
     }
 

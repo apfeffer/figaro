@@ -1,13 +1,13 @@
 /*
  * SufficientStatisticsVariableElimination.scala
  * Variable elimination algorithm for sufficient statistics factors
- * 
+ *
  * Created By:      Michael Howard (mhoward@cra.com)
  * Creation Date:   Jun 1, 2013
- * 
+ *
  * Copyright 2013 Avrom J. Pfeffer and Charles River Analytics, Inc.
  * See http://www.cra.com or email figaro@cra.com for information.
- * 
+ *
  * See http://www.github.com/p2t2/figaro for a copy of the software license.
  */
 
@@ -16,15 +16,18 @@ package com.cra.figaro.algorithm.factored
 import com.cra.figaro.algorithm._
 import com.cra.figaro.algorithm.learning._
 import com.cra.figaro.language._
-import com.cra.figaro.algorithm.factored.factors._
 import scala.collection._
-import scala.collection.mutable.{ Map, Set }
+import scala.collection.mutable.{ Set }
+import scala.collection.immutable.Map
+import com.cra.figaro.util.MultiSet
+import com.cra.figaro.algorithm.factored.factors._
+import com.cra.figaro.algorithm.factored.factors.factory.Factory
 
 /**
- * Variable elimination for sufficient statistics factors. 
+ * Variable elimination for sufficient statistics factors.
  * The final factor resulting from variable elimination contains a mapping of parameters to sufficient statistics vectors
  * which can be used to maximize parameter values.
- * 
+ *
  * @param parameterMap A map of parameters to their sufficient statistics.
  */
 class SufficientStatisticsVariableElimination(
@@ -43,25 +46,24 @@ class SufficientStatisticsVariableElimination(
    * Clear the sufficient statistics factors used by this algorithm.
    */
   private def removeFactors() {
-    statFactor.removeFactors
+    Variable.clearCache
   }
 
   /**
-   *  Particular implementations of probability of evidence algorithms must define the following method. 
+   *  Particular implementations of probability of evidence algorithms must define the following method.
    */
-  def getFactors(neededElements: List[Element[_]], targetElements: List[Element[_]], upper: Boolean = false): List[Factor[(Double, mutable.Map[Parameter[_], Seq[Double]])]] = {
+  def getFactors(neededElements: List[Element[_]], targetElements: List[Element[_]], upper: Boolean = false): List[Factor[(Double, Map[Parameter[_], Seq[Double]])]] = {
     val allElements = neededElements.filter(p => p.isInstanceOf[Parameter[_]] == false)
     if (debug) {
       println("Elements appearing in factors and their ranges:")
-      for { element <- allElements } { 
-        println(Variable(element).id + "(" + element.name.string + "@" + element.hashCode + ")" + ": " + element + ": " + Variable(element).range.mkString(",")) 
+      for { element <- allElements } {
+        println(Variable(element).id + "(" + element.name.string + "@" + element.hashCode + ")" + ": " + element + ": " + Variable(element).range.mkString(","))
       }
     }
-
-    Factory.removeFactors()
+    
     val thisUniverseFactors = allElements flatMap (statFactor.make(_))
     val dependentUniverseFactors =
-      for { (dependentUniverse, evidence) <- dependentUniverses } yield statFactor.makeDependentFactor(universe, dependentUniverse, dependentAlgorithm(dependentUniverse, evidence))
+      for { (dependentUniverse, evidence) <- dependentUniverses } yield statFactor.makeDependentFactor(Variable.cc, universe, dependentUniverse, dependentAlgorithm(dependentUniverse, evidence))
 
     dependentUniverseFactors ::: thisUniverseFactors
   }
@@ -70,12 +72,12 @@ class SufficientStatisticsVariableElimination(
    * Empty for this algorithm.
    */
   val targetElements = List[Element[_]]()
-  
+
   override def starterElements = universe.conditionedElements ++ universe.constrainedElements
 
   private var result: (Double, Map[Parameter[_], Seq[Double]]) = _
 
-  def finish(factorsAfterElimination: Set[Factor[(Double, Map[Parameter[_], Seq[Double]])]], eliminationOrder: List[Variable[_]]): Unit = {
+  def finish(factorsAfterElimination: MultiSet[Factor[(Double, Map[Parameter[_], Seq[Double]])]], eliminationOrder: List[Variable[_]]): Unit = {
     // It is possible that there are no factors (this will happen if there is no evidence).
     // Therefore, we start with the unit factor and use foldLeft, instead of simply reducing the factorsAfterElimination.
     val finalFactor = factorsAfterElimination.foldLeft(Factory.unit(semiring))(_.product(_))
@@ -86,15 +88,14 @@ class SufficientStatisticsVariableElimination(
   }
 
   /**
-   * Returns a mapping of parameters to sufficient statistics resulting from 
+   * Returns a mapping of parameters to sufficient statistics resulting from
    * elimination of the factors.
    */
   def getSufficientStatisticsForAllParameters = { result._2.toMap }
 
   val semiring = SufficientStatisticsSemiring(parameterMap)
 
-  override def cleanUp() = { 
-    statFactor.removeFactors
+  override def cleanUp() = {    
     super.cleanUp()
   }
 

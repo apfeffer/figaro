@@ -17,7 +17,7 @@ import com.cra.figaro.algorithm.{LazyAlgorithm, ProbQueryAlgorithm}
 import com.cra.figaro.algorithm.factored.{FactoredAlgorithm, VEGraph}
 import com.cra.figaro.language.{Element, Universe}
 import com.cra.figaro.algorithm.factored.factors._
-import com.cra.figaro.algorithm.factored.factors.Factory
+import com.cra.figaro.algorithm.lazyfactored.factory.Factory
 import scala.annotation.tailrec
 import com.cra.figaro.util._
 import scala.collection.mutable.{Map, Set}
@@ -206,7 +206,7 @@ with LazyAlgorithm {
   var targetFactors: Map[Element[_], Factor[(Double, Double)]] = Map()
 
   private def marginalizeToTarget(factor: Factor[(Double, Double)], target: Element[_]): Unit = {
-    val targetFactor = factor.marginalizeTo(BoundsSumProductSemiring(), Variable(target))
+    val targetFactor = factor.marginalizeToWithSum(BoundsSumProductSemiring().sum, Variable(target))
     targetFactors += target -> targetFactor
   }
 
@@ -354,7 +354,7 @@ with LazyAlgorithm {
       val best = candidates.extractMin()._1
       // do not read the best variable after it has been removed, and do not add the preserved variables
       val touched = graph.info(best).neighbors - best -- toPreserve
-      val nextGraph = graph.eliminate(best)
+      val (nextGraph, newCost) = graph.eliminate(best)
       touched foreach (v => candidates += v.asInstanceOf[Variable[_]] -> graph.score(v))
       eliminationOrderHelper(candidates, toPreserve, nextGraph, best :: accum)
     }

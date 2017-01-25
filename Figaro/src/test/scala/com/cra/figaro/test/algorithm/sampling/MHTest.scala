@@ -32,7 +32,7 @@ import com.cra.figaro.test.tags.Performance
 
 class MHTest extends WordSpec with Matchers with PrivateMethodTester {
   "Anytime MetropolisHastings" should {
-        
+
     "for a constant produce the constant with probability 1" in {
       Universe.createNew()
       val c = Constant(1)
@@ -257,13 +257,13 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
       try {
         mh.start()
         mh.stop()
-        mh.probability(f1, (b: Boolean) => b) should be(p1 / (p1 + p2) +- tolerance)
+        mh.probability(f1)(b => b) should be(p1 / (p1 + p2) +- tolerance)
       } finally {
         mh.kill()
       }
     }
 
-    "with a condition on the result of an If in which both consequences are random, correctly condition the test" taggedAs(NonDeterministic) in {
+    "with a condition on the result of an If in which both consequences are random, correctly condition the test" taggedAs (NonDeterministic) in {
       val numSamples = 100000
       val tolerance = 0.01
       Universe.createNew()
@@ -276,7 +276,7 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
         alg.stop()
         val p1 = 0.2 * 0.7
         val p2 = 0.8 * 0.4
-        alg.probability(elem1, (b: Boolean) => b) should be(p1 / (p1 + p2) +- tolerance)
+        alg.probability(elem1)(b => b) should be(p1 / (p1 + p2) +- tolerance)
       } finally {
         alg.kill()
       }
@@ -293,7 +293,7 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
       try {
         alg.start()
         alg.stop()
-        alg.probability(elem2, (d: Double) => 1.4 < d && d < 1.6) should be(1.0 +- tolerance)
+        alg.probability(elem2)(d => 1.4 < d && d < 1.6) should be(1.0 +- tolerance)
       } finally {
         alg.kill()
       }
@@ -336,8 +336,8 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
   }
 
   "Testing a Metropolis-Hastings algorithm" should {
-    
-   "produce correct results with a typed scheme" in {
+
+    "produce correct results with a typed scheme" in {
       val numSamples = 200000
       val tolerance = 0.01
       Universe.createNew()
@@ -361,28 +361,27 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
       try {
         mh.start()
         mh.stop()
-        mh.probability(f1, (b: Boolean) => b) should be(p1 / (p1 + p2) +- tolerance)
+        mh.probability(f1)(b => b) should be(p1 / (p1 + p2) +- tolerance)
       } finally {
         mh.kill()
       }
     }
-   
-   //Need  better use cases for these two schemes.
+
+    //Need  better use cases for these two schemes.
     "produce correct results with a switching scheme" in {
       Universe.createNew()
       val s1 = Select(0.4 -> 1, 0.6 -> 4)
       val s2 = Select(0.2 -> 2, 0.8 -> 3)
       s1.setConstraint((i: Int) => if (i == 1) 1; else 0.25)
       val p1 = Predicate(s1, (i: Int) => i == 4)
-      val scheme = SwitchScheme(() => (s1,s2),Some(FinalScheme(() => Universe.universe.randomStochasticElement())))
+      val scheme = SwitchScheme(() => (s1, s2), Some(FinalScheme(() => Universe.universe.randomStochasticElement())))
       val alg = MetropolisHastings(scheme)
       s1.value = 1
       val (_, scores, _) = alg.test(10000, List(p1), List())
       // probability of s1 changing to 4 is 0.5 (prob. s1 proposed) * 0.6 (prob 4 is chosen if s1 proposed) * 0.25
       scores(p1) should be(0.075 +- 0.01)
     }
-    
-    
+
     "produce values satisfying a predicate the correct amount of the time without conditions or constraints" in {
       Universe.createNew()
       val s1 = Select(0.4 -> 1, 0.6 -> 4)
@@ -421,7 +420,7 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
   }
 
   "Fixed bugs" should {
-    "propose temporary elements when non-temporary elements are non-stochastic" taggedAs(NonDeterministic) in {
+    "propose temporary elements when non-temporary elements are non-stochastic" taggedAs (NonDeterministic) in {
       Universe.createNew()
       val c1 = NonCachingChain(Constant(0), (i: Int) => Flip(0.7))
       val a1 = If(c1, Constant(1), Constant(0))
@@ -430,6 +429,47 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
       alg.start()
       alg.probability(a1, 1) should be(0.7 +- 0.01)
     }
+
+    "not record invalid states" taggedAs (NonDeterministic) in {
+      Universe.createNew()
+      val c1 = Flip(0.9)
+      val a1 = If(c1, com.cra.figaro.library.atomic.discrete.Uniform(1, 2), Select(0.999 -> 2, 0.001 -> 3))
+      a1.observe(3)
+      val alg = MetropolisHastings(10000, ProposalScheme.default, a1, c1)
+      alg.start()
+      alg.distribution(c1).toList.exists(s => s._2 == true) should be(false)
+    }
+    "correctly update elements in order" taggedAs (NonDeterministic) in {
+      // bug test for issue #453
+
+      Universe.createNew()
+      val Market = Select(0.5 -> 0, 0.3 -> 1, 0.2 -> 2)
+      val Survey = CPD(Constant(true), Market,
+        (false, 0) -> Constant(-1), (false, 1) -> Constant(-1), (false, 2) -> Constant(-1),
+        (true, 0) -> Select(0.6 -> 0, 0.3 -> 1, 0.1 -> 2),
+        (true, 1) -> Select(0.3 -> 0, 0.4 -> 1, 0.3 -> 2),
+        (true, 2) -> Select(0.1 -> 0, 0.4 -> 1, 0.5 -> 2))
+      val Found = Chain(Survey, (i: Int) => com.cra.figaro.library.atomic.discrete.Uniform(true, false))
+      def Value_fcn(f: Boolean, m: Int): Double = {
+        if (f) {
+          m match {
+            case 0 => -7.0
+            case 1 => 5.0
+            case 2 => 20.0
+          }
+        } else {
+          0.0
+        }
+      }
+      val Value = Apply(Found, Market, Value_fcn)
+      val Z = ^^(Found, Value)
+
+      val alg = MetropolisHastings(20000, ProposalScheme.default, Z)
+      alg.start()
+
+      val a = alg.distribution(Z).toList
+      alg.distribution(Z).toList.exists(s => s._2._1 == false && s._2._2 != 0.0) should be(false)
+    }
   }
 
   def newState(mh: MetropolisHastings): State = {
@@ -437,6 +477,44 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
     val method = cls.getDeclaredMethod("newState")
     method.setAccessible(true)
     method.invoke(mh).asInstanceOf[State]
+  }
+
+  "Sampling the posterior" should {
+    "produce the correct answer for marginals" in {
+      Universe.createNew()
+      val u = Uniform(0.2, 1.0)
+      val f = Flip(u)
+      val a = If(f, Select(0.3 -> 1, 0.7 -> 2), Constant(2))
+      a.setConstraint((i: Int) => i.toDouble)
+      // U(true) = \int_{0.2}^{1.0} (0.3 + 2 * 0.7) p = 0.85 * 0.96
+      // U(false) = \int_{0.2}^(1.0) (2 * (1-p)) = 0.64
+      val u1 = 0.85 * 0.96
+      val u2 = 0.64
+      val pos = MetropolisHastings.sampleJointPosterior(f)
+      val probTrue = (pos.take(1000).toList.map(t => t(0).asInstanceOf[Boolean])).count(p => p)
+      probTrue.toDouble / 1000.0 should be(u1 / (u1 + u2) +- .01)
+    }
+
+    "produce the correct answer for joint" in {
+      Universe.createNew()
+      val u = Uniform(0.2, 1.0)
+      val f = Flip(u)
+      val a = If(f, Select(0.3 -> 1, 0.7 -> 2), Constant(2))
+      a.setConstraint((i: Int) => i.toDouble)
+      val pair = ^^(f, a)
+      val alg = Importance(20000, pair)
+      alg.start()
+
+      val pos = MetropolisHastings.sampleJointPosterior(f, a)
+      val samples = pos.take(5000).toList.map(t => (t(0).asInstanceOf[Boolean], t(1).asInstanceOf[Int]))
+
+      val probTrueTwo = samples.count(p => p._1 == true && p._2 == 2).toDouble / 5000.0 should be(alg.probability(pair, (true, 2)) +- .01)
+      val probTrueOne = samples.count(p => p._1 == true && p._2 == 1).toDouble / 5000.0 should be(alg.probability(pair, (true, 1)) +- .01)
+      val probFalseTwo = samples.count(p => p._1 == false && p._2 == 2).toDouble / 5000.0 should be(alg.probability(pair, (false, 2)) +- .01)
+      val probFalseOne = samples.count(p => p._1 == false && p._2 == 1).toDouble / 5000.0 should be(alg.probability(pair, (false, 1)) +- .01)
+      alg.kill()
+    }
+
   }
 
   def getDissatisfied(mh: MetropolisHastings): Set[Element[_]] = {
@@ -508,7 +586,7 @@ class MHTest extends WordSpec with Matchers with PrivateMethodTester {
       mh.start()
       Thread.sleep(1000)
       mh.stop()
-//      println(mh.getSampleCount.toString + " samples")
+      //      println(mh.getSampleCount.toString + " samples")
       mh.probability(target, predicate) should be(prob +- tolerance)
     } finally {
       mh.kill()

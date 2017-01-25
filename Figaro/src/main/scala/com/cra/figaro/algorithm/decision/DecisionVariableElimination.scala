@@ -1,13 +1,13 @@
 /*
  * DecisionVariableElimination.scala
  * Variable elimination for Decisions algorithm.
- * 
+ *
  * Created By:      Brian Ruttenberg (bruttenberg@cra.com)
  * Creation Date:   Oct 1, 2012
- * 
+ *
  * Copyright 2013 Avrom J. Pfeffer and Charles River Analytics, Inc.
  * See http://www.cra.com or email figaro@cra.com for information.
- * 
+ *
  * See http://www.github.com/p2t2/figaro for a copy of the software license.
  */
 
@@ -16,7 +16,6 @@ package com.cra.figaro.algorithm.decision
 import com.cra.figaro.algorithm._
 import com.cra.figaro.algorithm.factored._
 import com.cra.figaro.algorithm.factored.factors._
-import com.cra.figaro.algorithm.factored.factors.factory._
 import com.cra.figaro.algorithm.sampling._
 import com.cra.figaro.language._
 import com.cra.figaro.library.decision._
@@ -25,10 +24,11 @@ import com.cra.figaro.algorithm.lazyfactored.Extended
 import annotation.tailrec
 import scala.collection.mutable.{ Map, Set }
 import scala.language.existentials
+import com.cra.figaro.algorithm.factored.factors.factory.Factory
 
 /* Trait only extends for double utilities. User needs to provide another trait or convert utilities to double
  * in order to use
- * 
+ *
  */
 /**
  * Trait for Decision based Variable Elimination. This implementation is hardcoded to use.
@@ -39,12 +39,12 @@ trait ProbabilisticVariableEliminationDecision extends VariableElimination[(Doub
    */
   /* Implementations must define this */
   def getUtilityNodes: List[Element[_]]
-  
+
   /**
    * Semiring for Decisions uses a sum-product-utility semiring.
    */
   override val semiring = SumProductUtilitySemiring()
-  
+
   /**
    * Makes a utility factor an element designated as a utility. This is factor of a tuple (Double, Double)
    * where the first value is 1.0 and the second is a possible utility of the element.
@@ -60,24 +60,23 @@ trait ProbabilisticVariableEliminationDecision extends VariableElimination[(Doub
   override def starterElements = getUtilityNodes ::: targetElements
 
   /**
-   * Create the factors for decision factors. Each factor is hardcoded as a tuple of (Double, Double), 
-   * where the first value is the probability and the second is the utility. 
-   */ 
+   * Create the factors for decision factors. Each factor is hardcoded as a tuple of (Double, Double),
+   * where the first value is the probability and the second is the utility.
+   */
   def getFactors(neededElements: List[Element[_]], targetElements: List[Element[_]], upper: Boolean = false): List[Factor[(Double, Double)]] = {
     if (debug) {
       println("Elements (other than utilities) appearing in factors and their ranges:")
-      for { element <- neededElements } { 
-        println(Variable(element).id + "(" + element.name.string + "@" + element.hashCode + ")" + ": " + element + ": " + Variable(element).range.mkString(",")) 
+      for { element <- neededElements } {
+        println(Variable(element).id + "(" + element.name.string + "@" + element.hashCode + ")" + ": " + element + ": " + Variable(element).range.mkString(","))
       }
     }
 
-    Factory.removeFactors()
-    val thisUniverseFactorsExceptUtil = neededElements flatMap (Factory.make(_))
+    val thisUniverseFactorsExceptUtil = neededElements flatMap (Factory.makeFactorsForElement(_))
     // Make special utility factors for utility elements
     val thisUniverseFactorsUtil = getUtilityNodes map (makeUtilFactor(_))
 
     val dependentUniverseFactors =
-      for { (dependentUniverse, evidence) <- dependentUniverses } yield Factory.makeDependentFactor(universe, dependentUniverse, dependentAlgorithm(dependentUniverse, evidence))
+      for { (dependentUniverse, evidence) <- dependentUniverses } yield Factory.makeDependentFactor(Variable.cc, universe, dependentUniverse, dependentAlgorithm(dependentUniverse, evidence))
 
     // Convert all non-utility factors from standard factors to decision factors, ie, factors are now tuples of (Double, _)
     val thisUniverseFactorsExceptUtil_conv = thisUniverseFactorsExceptUtil.map(s => convert(s, false))
@@ -99,7 +98,7 @@ trait ProbabilisticVariableEliminationDecision extends VariableElimination[(Doub
       f.mapTo[(Double, Double)]((d: Double) => (d, 0.0), semiring.asInstanceOf[Semiring[(Double, Double)]])
     } else {
       if (f.variables.length > 1) throw new IllegalUtilityNodeException
-      
+
       val newF = f.mapTo[(Double, Double)]((d: Double) => (d, 0.0), semiring.asInstanceOf[Semiring[(Double, Double)]])
       for {i <- 0 until f.variables(0).range.size} {
         newF.set(List(i), (newF.get(List(i))._1, f.variables(0).range(i).asInstanceOf[Double]))
@@ -125,20 +124,20 @@ class ProbQueryVariableEliminationDecision[T, U](override val universe: Universe
   lazy val queryTargets = List(target)
 
   /**
-   *  The variable elimination eliminates all variables except on all decision nodes and their parents. 
+   *  The variable elimination eliminates all variables except on all decision nodes and their parents.
    *  Thus the target elements is both the decision element and the parent element.
    */
-  val targetElements = List(target, target.args(0)) 
+  val targetElements = List(target, target.args(0))
 
   def getUtilityNodes = utilityNodes
 
   private var finalFactors: Factor[(Double, Double)] = Factory.defaultFactor[(Double, Double)](List(), List(), semiring)
 
   /* Marginalizes the final factor using the semiring for decisions
-   * 
+   *
    */
   private def marginalizeToTarget(factor: Factor[(Double, Double)], target: Element[_]): Unit = {
-    val unnormalizedTargetFactor = factor.marginalizeTo(semiring, Variable(target))
+    val unnormalizedTargetFactor = factor.marginalizeTo(Variable(target))
     val z = unnormalizedTargetFactor.foldLeft(semiring.zero, (x: (Double, Double), y: (Double, Double)) => (x._1 + y._1, 0.0))
    //val targetFactor = Factory.make[(Double, Double)](unnormalizedTargetFactor.variables)
     val targetFactor = unnormalizedTargetFactor.mapTo((d: (Double, Double)) => (d._1 / z._1, d._2))
@@ -148,13 +147,13 @@ class ProbQueryVariableEliminationDecision[T, U](override val universe: Universe
   private def marginalize(resultFactor: Factor[(Double, Double)]) =
     queryTargets foreach (marginalizeToTarget(resultFactor, _))
 
-  private def makeResultFactor(factorsAfterElimination: Set[Factor[(Double, Double)]]): Factor[(Double, Double)] = {
+  private def makeResultFactor(factorsAfterElimination: MultiSet[Factor[(Double, Double)]]): Factor[(Double, Double)] = {
     // It is possible that there are no factors (this will happen if there are no decisions or utilities).
     // Therefore, we start with the unit factor and use foldLeft, instead of simply reducing the factorsAfterElimination.
     factorsAfterElimination.foldLeft(Factory.unit(semiring))(_.product(_))
   }
 
-  def finish(factorsAfterElimination: Set[Factor[(Double, Double)]], eliminationOrder: List[Variable[_]]) =
+  def finish(factorsAfterElimination: MultiSet[Factor[(Double, Double)]], eliminationOrder: List[Variable[_]]) =
     finalFactors = makeResultFactor(factorsAfterElimination)
 
   /**
@@ -176,7 +175,7 @@ class ProbQueryVariableEliminationDecision[T, U](override val universe: Universe
     (0.0 /: computeDistribution(target))(_ + get(_))
   }
 
-  /** 
+  /**
    *  Returns the computed utility of all parent/decision tuple values. For VE, these are not samples
    *  but the actual computed expected utility for all combinations of the parent and decision.
    */
@@ -194,14 +193,14 @@ class ProbQueryVariableEliminationDecision[T, U](override val universe: Universe
     // find the variables of the parents.
     val parentVariable = factor.variables.filterNot(_ == decisionVariable)(0)
 
-    // index of the decision variable     
+    // index of the decision variable
 
     val indexOfDecision = indices(factor.variables, decisionVariable)
     val indexOfParent = indices(factor.variables, parentVariable)
 
     for { indices <- factor.getIndices} {
 
-      /* for each index in the list of indices, strip out the decision variable index, 
+      /* for each index in the list of indices, strip out the decision variable index,
        * and retrieve the map entry for the parents. If the factor value is greater than
        * what is currently stored in the strategy map, replace the decision with the new one from the factor
        */
@@ -257,7 +256,7 @@ object DecisionVariableElimination {
   }
   /**
    * Create a decision variable elimination algorithm with  the given decision variables and indicated utility
-   * nodes and using the given dependent universes in the current default universe. Use the given dependent 
+   * nodes and using the given dependent universes in the current default universe. Use the given dependent
    * algorithm function to determine the algorithm to use to compute probability of evidence in each dependent universe.
    */
   def apply[T, U](

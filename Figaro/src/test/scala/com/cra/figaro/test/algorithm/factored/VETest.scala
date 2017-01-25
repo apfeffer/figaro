@@ -1,13 +1,13 @@
 /*
- * VETest.scala  
+ * VETest.scala
  * Variable elimination tests.
- * 
+ *
  * Created By:      Avi Pfeffer (apfeffer@cra.com)
  * Creation Date:   Jan 1, 2009
- * 
+ *
  * Copyright 2013 Avrom J. Pfeffer and Charles River Analytics, Inc.
  * See http://www.cra.com or email figaro@cra.com for information.
- * 
+ *
  * See http://www.github.com/p2t2/figaro for a copy of the software license.
  */
 
@@ -28,6 +28,8 @@ import com.cra.figaro.test._
 import scala.collection.mutable.Map
 import com.cra.figaro.test.tags.Performance
 import com.cra.figaro.test.tags.NonDeterministic
+import com.cra.figaro.algorithm.factored.factors.factory.Factory
+import com.cra.figaro.algorithm.structured.algorithm.structured.StructuredMPEVE
 
 class VETest extends WordSpec with Matchers {
   "A VEGraph" when {
@@ -46,8 +48,8 @@ class VETest extends WordSpec with Matchers {
         val v4 = Variable(e4)
         val v5 = Variable(e5)
         val v6 = Variable(e6)
-        val f = Factory.simpleMake[Double](List(v1, v2, v3, v4))
-        val g = Factory.simpleMake[Double](List(v5, v3, v2, v6))
+        val f = Factory.defaultFactor[Double](List(v1, v2, v3, v4), List())
+        val g = Factory.defaultFactor[Double](List(v5, v3, v2, v6), List())
         val af = AbstractFactor(f.variables)
         val ag = AbstractFactor(g.variables)
         val graph = new VEGraph(List(f, g))
@@ -82,8 +84,8 @@ class VETest extends WordSpec with Matchers {
         val v4 = Variable(e4)
         val v5 = Variable(e5)
         val v6 = Variable(e6)
-        val f = Factory.simpleMake[Double](List(v1, v2, v3, v4))
-        val g = Factory.simpleMake[Double](List(v5, v3, v2, v6))
+        val f = Factory.defaultFactor[Double](List(v1, v2, v3, v4), List())
+        val g = Factory.defaultFactor[Double](List(v5, v3, v2, v6), List())
         val af = AbstractFactor(f.variables)
         val ag = AbstractFactor(g.variables)
         VEGraph.cost(List(af, ag)) should equal(18) // 2*1*3*2 + 1*3*1*2
@@ -114,9 +116,9 @@ class VETest extends WordSpec with Matchers {
         val v5 = Variable(e5)
         val v6 = Variable(e6)
         val v7 = Variable(e7)
-        val f = Factory.simpleMake[Double](List(v1, v2, v3, v4))
-        val g = Factory.simpleMake[Double](List(v5, v3, v2, v6))
-        val h = Factory.simpleMake[Double](List(v1, v7))
+        val f = Factory.defaultFactor[Double](List(v1, v2, v3, v4), List())
+        val g = Factory.defaultFactor[Double](List(v5, v3, v2, v6), List())
+        val h = Factory.defaultFactor[Double](List(v1, v7), List())
         val graph1 = new VEGraph(List(f, g, h))
         val score = graph1.score(v3)
         score should equal(-10) // 2*1*2*1*2 - (2*1*3*2 + 1*3*1*2)
@@ -141,11 +143,11 @@ class VETest extends WordSpec with Matchers {
           val v5 = Variable(e5)
           val v6 = Variable(e6)
           val v7 = Variable(e7)
-          val f = Factory.simpleMake[Double](List(v1, v2, v3, v4))
-          val g = Factory.simpleMake[Double](List(v5, v3, v2, v6))
-          val h = Factory.simpleMake[Double](List(v1, v7))
+          val f = Factory.defaultFactor[Double](List(v1, v2, v3, v4), List())
+          val g = Factory.defaultFactor[Double](List(v5, v3, v2, v6), List())
+          val h = Factory.defaultFactor[Double](List(v1, v7), List())
           val graph1 = new VEGraph(List(f, g, h))
-          val graph2 = graph1.eliminate(v3)
+          val (graph2, _) = graph1.eliminate(v3)
           val VariableInfo(v1Factors, v1Neighbors) = graph2.info(v1)
           v1Factors.size should equal(2) // h and the new factor
           assert(v1Factors exists ((factor: AbstractFactor) => factor.variables.size == 5)) // all except v3 and v7
@@ -167,11 +169,11 @@ class VETest extends WordSpec with Matchers {
         val v5 = Variable(e5)
         val v6 = Variable(e6)
         val v7 = Variable(e7)
-        val f = Factory.simpleMake[Double](List(v1, v2, v3, v4))
-        val g = Factory.simpleMake[Double](List(v5, v3, v2, v6))
-        val h = Factory.simpleMake[Double](List(v1, v7))
+        val f = Factory.defaultFactor[Double](List(v1, v2, v3, v4), List())
+        val g = Factory.defaultFactor[Double](List(v5, v3, v2, v6), List())
+        val h = Factory.defaultFactor[Double](List(v1, v7), List())
         val graph1 = new VEGraph(List(f, g, h))
-        val graph2 = graph1.eliminate(v3)
+        val (graph2, _) = graph1.eliminate(v3)
         val VariableInfo(v1Factors, v1Neighbors) = graph2.info(v1)
         v1Neighbors should not contain (v3)
       }
@@ -206,10 +208,10 @@ class VETest extends WordSpec with Matchers {
         val v6 = Variable(e6)
         val v7 = Variable(e7)
         val v8 = Variable(e8)
-        val f = Factory.simpleMake[Double](List(v1, v2, v3, v4))
-        val g = Factory.simpleMake[Double](List(v5, v3, v2, v6))
-        val h = Factory.simpleMake[Double](List(v1, v7))
-        val i = Factory.simpleMake[Double](List(v8, v1, v3))
+        val f = Factory.defaultFactor[Double](List(v1, v2, v3, v4), List())
+        val g = Factory.defaultFactor[Double](List(v5, v3, v2, v6), List())
+        val h = Factory.defaultFactor[Double](List(v1, v7), List())
+        val i = Factory.defaultFactor[Double](List(v8, v1, v3), List())
         val order = VariableElimination.eliminationOrder(List(f, g, h, i), Set(v5, v8))._2
         assert(order == List(v3, v4, v1, v6, v7, v2) ||
           order == List(v3, v4, v1, v7, v6, v2) ||
@@ -228,7 +230,7 @@ class VETest extends WordSpec with Matchers {
       def make(numVars: Int): Traversable[Factor[Double]] = {
         val universe = new Universe
         val a: List[Variable[_]] = List.tabulate(numVars)(i => Variable(Flip(0.3)("", universe)))
-        for { i <- 0 to numVars - 2 } yield Factory.simpleMake[Double](List(a(i), a(i + 1)))
+        for { i <- 0 to numVars - 2 } yield Factory.defaultFactor[Double](List(a(i), a(i + 1)), List())
       }
       val factors1 = make(small)
       val factors2 = make(large)
@@ -306,7 +308,7 @@ class VETest extends WordSpec with Matchers {
       val a = If(f, Select(0.3 -> 1, 0.7 -> 2), Constant(2))
       test(f, (b: Boolean) => b, 0.6)
     }
-    
+
     "on a different universe from the current universe, produce the correct result" in {
       val u1 = Universe.createNew()
       val u = Select(0.25 -> 0.3, 0.25 -> 0.5, 0.25 -> 0.7, 0.25 -> 0.9)
@@ -315,7 +317,7 @@ class VETest extends WordSpec with Matchers {
       val tolerance = 0.0000001
       val algorithm = VariableElimination(f)(u1)
       algorithm.start()
-      algorithm.probability(f, (b: Boolean) => b) should be(0.6 +- tolerance)
+      algorithm.probability(f)(b => b) should be(0.6 +- tolerance)
       algorithm.kill()
     }
 
@@ -381,7 +383,22 @@ class VETest extends WordSpec with Matchers {
       ve.probability(y, true) should be(((0.1 * 0.2 + 0.9 * 0.2) / (0.1 * 0.2 + 0.9 * 0.2 + 0.9 * 0.8)) +- 0.0000000001)
       ve.kill
     }
-    
+
+    "with a very wide model produce the correct result" in {
+      Universe.createNew()
+      var root = Flip(0.5)
+
+      val rand = new scala.util.Random(System.currentTimeMillis)
+      for (_ <- 0 until 1000) {
+        val v = If(root, Flip(0.5), Flip(0.5))
+        if (rand.nextBoolean) {
+          v.observe(true)
+        } else {
+          v.observe(false)
+        }
+      }
+      test(root, (r: Boolean) => r == true, 0.50)
+    }
   }
 
   "MPEVariableElimination" should {
@@ -398,7 +415,7 @@ class VETest extends WordSpec with Matchers {
       // p(e1=F,e2=T,e3=T) = 0.25 * 0.9 * 0.4 = .09
       // p(e1=F,e2=F,e3=F) = 0.25 * 0.1 * 0.6 = .015
       // MPE: e1=T,e2=F,e3=F,e4=T
-      val alg = MPEVariableElimination()
+      val alg = MPEVariableElimination()      
       alg.start
       alg.mostLikelyValue(e1) should equal(true)
       alg.mostLikelyValue(e2) should equal(false)
@@ -407,7 +424,7 @@ class VETest extends WordSpec with Matchers {
       alg.kill
     }
   }
-  
+
   def test[T](target: Element[T], predicate: T => Boolean, prob: Double) {
     val tolerance = 0.0000001
     val algorithm = VariableElimination(target)
